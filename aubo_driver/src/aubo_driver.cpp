@@ -30,13 +30,47 @@
  */
 
 #include "aubo_driver/aubo_driver.h"
+#include <sys/time.h>
+#include <time.h>
+#include <stdio.h>
+#include <algorithm>
 
 namespace aubo_driver {
 
+double MaxAcc[ARM_DOF] = {17.30878, 17.30878, 17.30878, 20.73676, 20.73676, 20.73676};
+double MaxVelc[ARM_DOF] = {2.596177, 2.596177, 2.596177, 3.110177, 3.110177, 3.110177};
+
 std::string AuboDriver::joint_name_[ARM_DOF] = {"shoulder_joint","upperArm_joint","foreArm_joint","wrist1_joint","wrist2_joint","wrist3_joint"};
 
+std::ofstream file;
+std::ofstream file_v;
+// std::ofstream file_velc;
+
+char *t1[128] = {0};
+
+void get_format_time_ms(char *str_time) {
+    struct tm *tm_t;
+    struct timeval time;
+
+    gettimeofday(&time,NULL);
+    tm_t = localtime(&time.tv_sec);
+    if(NULL != tm_t) {
+        sprintf(str_time,"%04d-%02d-%02d %02d:%02d:%02d.%03ld",
+            tm_t->tm_year+1900,
+            tm_t->tm_mon+1,
+            tm_t->tm_mday,
+            tm_t->tm_hour,
+            tm_t->tm_min,
+            tm_t->tm_sec,
+            time.tv_usec/1000);
+
+        return ;
+    }
+}
+
 AuboDriver::AuboDriver(int num = 0):delay_clear_times(0),buffer_size_(400),io_flag_delay_(0.02),data_recieved_(false),data_count_(0),real_robot_exist_(false),emergency_stopped_(false),protective_stopped_(false),normal_stopped_(false),
-    controller_connected_flag_(false),start_move_(false),control_mode_ (aubo_driver::SendTargetGoal),rib_buffer_size_(0),jti(ARM_DOF,1.0/200),jto(ARM_DOF),collision_class_(6)
+    controller_connected_flag_(false),start_move_(false),control_mode_ (aubo_driver::SendTargetGoal),rib_buffer_size_(0),jti(ARM_DOF,1.0/200),jto(ARM_DOF),collision_class_(6),
+    over_speed_flag_(false)
 {
     axis_number_ = 6 + num;
     /** initialize the parameters **/
@@ -62,14 +96,15 @@ AuboDriver::AuboDriver(int num = 0):delay_clear_times(0),buffer_size_(400),io_fl
     }
     rs.robot_controller_ = ROBOT_CONTROLLER;
     rib_status_.data.resize(3);
+    waypoint_vector_.clear();
 
     /** publish messages **/
-    joint_states_pub_ = nh_.advertise<sensor_msgs::JointState>("joint_states", 300);
-    joint_feedback_pub_ = nh_.advertise<control_msgs::FollowJointTrajectoryFeedback>("feedback_states", 100);
-    joint_target_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("/aubo_driver/real_pose", 50);
-    robot_status_pub_ = nh_.advertise<industrial_msgs::RobotStatus>("robot_status", 100);
+    joint_states_pub_ = nh_.advertise<sensor_msgs::JointState>("joint_states", 3000);
+    joint_feedback_pub_ = nh_.advertise<control_msgs::FollowJointTrajectoryFeedback>("feedback_states", 1000);
+    joint_target_pub_ = nh_.advertise<std_msgs::Float32MultiArray>("/aubo_driver/real_pose", 500);
+    robot_status_pub_ = nh_.advertise<industrial_msgs::RobotStatus>("robot_status", 1000);
     io_pub_ = nh_.advertise<aubo_msgs::IOState>("/aubo_driver/io_states", 10);
-    rib_pub_ = nh_.advertise<std_msgs::Int32MultiArray>("/aubo_driver/rib_status", 100);
+    rib_pub_ = nh_.advertise<std_msgs::Int32MultiArray>("/aubo_driver/rib_status", 1000);
     cancle_trajectory_pub_ = nh_.advertise<std_msgs::UInt8>("aubo_driver/cancel_trajectory",100);
     io_srv_ = nh_.advertiseService("/aubo_driver/set_io",&AuboDriver::setIO, this);
     ik_srv_ = nh_.advertiseService("/aubo_driver/get_ik",&AuboDriver::getIK, this);
@@ -78,10 +113,25 @@ AuboDriver::AuboDriver(int num = 0):delay_clear_times(0),buffer_size_(400),io_fl
     /** subscribe topics **/
     trajectory_execution_subs_ = nh_.subscribe("trajectory_execution_event", 10, &AuboDriver::trajectoryExecutionCallback,this);
     robot_control_subs_ = nh_.subscribe("robot_control", 10, &AuboDriver::robotControlCallback,this);
-    moveit_controller_subs_ = nh_.subscribe("moveItController_cmd", 2000, &AuboDriver::moveItPosCallback,this);
+    moveit_controller_subs_ = nh_.subscribe("moveItController_cmd", 20000, &AuboDriver::moveItPosCallback,this);
     teach_subs_ = nh_.subscribe("teach_cmd", 10, &AuboDriver::teachCallback,this);
     moveAPI_subs_ = nh_.subscribe("moveAPI_cmd", 10, &AuboDriver::AuboAPICallback, this);
     controller_switch_sub_ = nh_.subscribe("/aubo_driver/controller_switch", 10, &AuboDriver::controllerSwitchCallback, this);
+
+    std::string file_name = "/home/aubo-fy/aubo_ws/jointpose.csv";
+    remove(file_name.c_str());
+    file.open(file_name, std::ios::out);
+
+    std::string file_name_v = "/home/aubo-fy/aubo_ws/jointpf.csv";
+    remove(file_name_v.c_str());
+    file_v.open(file_name_v, std::ios::out);
+
+    // std::string file_name_velc = "/home/auboros/aubo_ws/velc.csv";
+    // remove(file_name_velc.c_str());
+    // file_v.open(file_name_velc, std::ios::out);
+
+
+    send_to_robot_thread_ = new std::thread(boost::bind(&AuboDriver::publishWaypointToRobot, this));
 }
 
 AuboDriver::~AuboDriver()
@@ -89,7 +139,7 @@ AuboDriver::~AuboDriver()
     /** leave Tcp2CanbusMode, surrender the control to the robot-controller**/
     if(control_option_ == aubo_driver::RosMoveIt)
         robot_send_service_.robotServiceLeaveTcp2CanbusMode();
-    /** log out　**/
+    /** log oută**/
     robot_send_service_.robotServiceLogout();
     robot_receive_service_.robotServiceLogout();
 }
@@ -108,8 +158,8 @@ void AuboDriver::timerCallback(const ros::TimerEvent& e)
             setCurrentPosition(joints);  // update the current robot joint states to ROS Controller
 
             /** Get the buff size of thr rib **/
-            robot_receive_service_.robotServiceGetRobotDiagnosisInfo(rs.robot_diagnosis_info_);
-            rib_buffer_size_ = rs.robot_diagnosis_info_.macTargetPosDataSize;
+//            robot_receive_service_.robotServiceGetRobotDiagnosisInfo(rs.robot_diagnosis_info_);
+//            rib_buffer_size_ = rs.robot_diagnosis_info_.macTargetPosDataSize;
 
 //            robot_receive_service_.robotServiceGetRobotCurrentState(rs.state_);            // this is controlled by Robot Controller
 //            robot_receive_service_.getErrDescByCode(rs.code_);
@@ -254,13 +304,14 @@ void AuboDriver::setTagrtPosition(double *target)
 
 bool AuboDriver::setRobotJointsByMoveIt()
 {
+    int same_point = 0;
     int ret = 0;
     // First check if the buf_queue_ is Empty
     if(!buf_queue_.empty())
     {
         PlanningState ps = buf_queue_.front();
-        buf_queue_.pop();
-     
+        buf_queue_.pop();    
+
 
         if(controller_connected_flag_)      // actually no need this judgment
         {
@@ -308,8 +359,20 @@ bool AuboDriver::setRobotJointsByMoveIt()
             }
             else
             {
-                ret = robot_send_service_.robotServiceSetRobotPosData2Canbus(ps.joint_pos_);
+                for(int i=0; i<6; i++) {
+                    ros_joint_pos_[i] = ps.joint_pos_[i];
+                }
+                ros_motion_queue_.enqueue(ros_joint_pos_);
+
+               file << ps.joint_pos_[0] << ","
+                    << ps.joint_pos_[1] << ","
+                    << ps.joint_pos_[2] << ","
+                    << ps.joint_pos_[3] << ","
+                    << ps.joint_pos_[4] << ","
+                    << ps.joint_pos_[5] << std::endl;
+
             }
+
 #ifdef LOG_INFO_DEBUG
             //            struct timeb tb;
             //            ftime(&tb);
@@ -324,6 +387,8 @@ bool AuboDriver::setRobotJointsByMoveIt()
         if(start_move_)
             start_move_ = false;
     }
+
+    return true;
 }
 
 void AuboDriver::controllerSwitchCallback(const std_msgs::Int32::ConstPtr &msg)
@@ -420,12 +485,12 @@ void AuboDriver::robotControlCallback(const std_msgs::String::ConstPtr &msg)
         aubo_robot_namespace::ToolDynamicsParam toolDynamicsParam;
         memset(&toolDynamicsParam, 0, sizeof(toolDynamicsParam));
         aubo_robot_namespace::ROBOT_SERVICE_STATE result;
-        ret = robot_send_service_.rootServiceRobotStartup(toolDynamicsParam/**工具动力学参数**/,
-                                                   collision_class_        /*碰撞等级*/,
-                                                   true     /*是否允许读取位姿　默认为true*/,
-                                                   true,    /*保留默认为true */
-                                                   1000,    /*保留默认为1000 */
-                                                   result); /*机械臂初始化*/
+        ret = robot_send_service_.rootServiceRobotStartup(toolDynamicsParam/**ĺˇĽĺˇĺ¨ĺĺ­Śĺć?**/,
+                                                   collision_class_        /*ç˘°ćç­çş§*/,
+                                                   true     /*ć?ĺŚĺčŽ¸č?ťĺä˝ĺ§żăéťč?¤ä¸ştrue*/,
+                                                   true,    /*äżçéťč?¤ä¸ştrue */
+                                                   1000,    /*äżçéťč?¤ä¸ş1000 */
+                                                   result); /*ćşć?°čĺĺ?ĺ*/
         if(ret == aubo_robot_namespace::InterfaceCallSuccCode)
             ROS_INFO("Initial sucess.");
         else
@@ -541,13 +606,20 @@ bool AuboDriver::connectToRobotController()
         ret2 = robot_receive_service_.robotServiceLogin(server_host_.c_str(), server_port, "aubo", "123456");
         controller_connected_flag_  = true;
         std::cout<<"login success."<<std::endl;
-        /** 接口调用: 获取真实臂是否存在 **/
+        aubo_robot_namespace::wayPoint_S wp;
+        robot_receive_service_.robotServiceGetCurrentWaypointInfo(wp);
+        for(int i=0; i<6; i++){
+            joint_filter_[i] = wp.jointpos[i];
+        }
+        /** ćĽĺŁč°ç¨: čˇĺçĺŽčćŻĺŚĺ­ĺ? **/
         ret2 = robot_receive_service_.robotServiceGetIsRealRobotExist(real_robot_exist_);
         if(ret2 == aubo_robot_namespace::InterfaceCallSuccCode)
         {
             (real_robot_exist_)? std::cout<<"real robot exist."<<std::endl:std::cout<<"real robot doesn't exist."<<std::endl;
             //power on the robot.
         }
+
+        robot_mac_size_service_.robotServiceLogin(server_host_.c_str(), server_port, "aubo", "123456");
 //        ros::param::set("/aubo_driver/robot_connected","1");
         return true;
     }
@@ -769,6 +841,173 @@ void AuboDriver::publishIOMsg()
     }
 }
 
+std::vector<aubo_robot_namespace::wayPoint_S> AuboDriver::tryPopWaypoint(int count)
+{
+    uint8_t same_point = 0;
+    std::vector<aubo_robot_namespace::wayPoint_S> wayPointVector;
+    aubo_robot_namespace::wayPoint_S wp;
+    std::array<double, 6> joint;  
+    std::array<double, 6> interpolation_joint;
+
+    for(int i = 0; i < count; i++) {
+        if(ros_motion_queue_.try_dequeue(joint)) {
+
+            same_point = 0;
+            for(int i=0; i<6; i++){
+                if (abs(joint[i] - joint_filter_[i]) < 0.00015) { //15
+                    same_point |= 1 << i;
+                }
+            }
+
+            // joint_filter_: current joint
+            // joint :        target joint. next point
+            if(0X3F != same_point) {              
+                //Check if the speed exceeds the limit.
+                for(int i = 0 ; i < 6 ; i++) {
+                    target_joint_velc_.jointPara[i] = fabs(joint[i] - joint_filter_[i]) / 0.005;
+                    if(target_joint_velc_.jointPara[i] > MaxVelc[i]) {
+                        ROS_ERROR("Joint %d velc: (%f - %f) / 0.005 = %f  ", i,  
+                                 joint[i], joint_filter_[i], target_joint_velc_.jointPara[i]);
+                        over_speed_flag_ = true;
+                        //stop robot move
+                        // robot_send_service_.robotServiceLeaveTcp2CanbusMode();
+                    }
+                }
+
+                if(over_speed_flag_){
+                    over_speed_flag_ = false;
+                    std::sort(target_joint_velc_.jointPara, target_joint_velc_.jointPara+6);
+                    ROS_ERROR("----->>>>> max velc is %f", target_joint_velc_.jointPara[5]);
+                    int n_equalpart = ceil(target_joint_velc_.jointPara[5]/MaxVelc[0]);
+                    ROS_ERROR("----->>>>> n_equalpart is %d", n_equalpart);
+                    interpolation_joint = joint_filter_;
+                    for(int i=0; i<n_equalpart-1; i++){
+                        for(int j=0; j<6; j++){
+                            interpolation_joint[j] = interpolation_joint[j] + (joint[j] - joint_filter_[j])/n_equalpart;
+                            ROS_ERROR("---->>>> joint %d is %f", j, interpolation_joint[j]);
+                        }
+                        memcpy(wp.jointpos, interpolation_joint.data(), 6 * sizeof(double));
+                        wayPointVector.push_back(wp);
+                    }       
+                }
+
+                //Check if the acceleration exceeds the limit.
+                for(int i = 0 ; i < 6 ; i++) {
+                    joint_acc_.jointPara[i] = fabs(target_joint_velc_.jointPara[i] - last_joint_velc_.jointPara[i]) / 0.005 ;
+                    if(joint_acc_.jointPara[i] > MaxAcc[i]) {
+                        if(over_speed_flag_){
+                            ROS_INFO("Joint %d acc: (%f - %f)/0.005 = %f  ", i, 
+                                target_joint_velc_.jointPara[i], last_joint_velc_.jointPara[i], joint_acc_.jointPara[i]);
+                        }
+                    }
+                }
+
+                memcpy(wp.jointpos, joint.data(), 6 * sizeof(double));
+                wayPointVector.push_back(wp);
+
+                //Copy target velocity parameters for the next calculation.
+                memcpy(last_joint_velc_.jointPara, target_joint_velc_.jointPara, sizeof(last_joint_velc_.jointPara));
+
+                joint_filter_ = joint;
+
+                file_v << wp.jointpos[0] << ","
+                       << wp.jointpos[1] << ","
+                       << wp.jointpos[2] << ","
+                       << wp.jointpos[3] << ","
+                       << wp.jointpos[4] << ","
+                       << wp.jointpos[5] << std::endl;
+            }
+        }
+    }
+
+    return wayPointVector;
+}
+
+void AuboDriver::publishWaypointToRobot()
+{
+    std::vector<aubo_robot_namespace::wayPoint_S> wayPointVector;  
+    int current_macsz = 0;                                 // ćĽĺŁćżçźĺ˛ĺşĺ¤§ĺ°
+    int expect_macsz = 400;                                // ćĽĺŁćżçźĺ˛ĺşĺ¤§ĺ°
+    int cnt = 0;
+
+    while(true){
+        //current_macsz = expect_macsz;
+
+        if(0 == robot_mac_size_service_.robotServiceGetRobotDiagnosisInfo(rs.robot_diagnosis_info_)) {
+            rib_buffer_size_ = rs.robot_diagnosis_info_.macTargetPosDataSize;
+            current_macsz    = rib_buffer_size_;
+
+            if(0 != current_macsz){
+                if((current_macsz/6)<5){
+                    ROS_INFO("get debug <<<<< >>>>>> time=%s count=%ld, macsz=%d", (char*)t1 ,
+                              ros_motion_queue_.size_approx(), current_macsz/6);
+                }
+
+
+            }else{
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            }
+
+        }else{
+            // get_format_time_ms((char*)t1);
+            // printf("get error <<<<< >>>>>> time=%s count=%ld, macsz=%d \n", (char*)t1 ,
+            //        ros_motion_queue_.size_approx(), current_macsz/6);
+        }
+
+        if(current_macsz < expect_macsz && 0 != ros_motion_queue_.size_approx()) {
+            
+            cnt = ceil( (double)(expect_macsz - current_macsz) / 6.0 );
+
+            wayPointVector = tryPopWaypoint(cnt);
+            if(0 != wayPointVector.size()){
+                // ROS_ERROR("----------->>>>>>>>>  size %d cnt %d", (int)wayPointVector.size(), cnt);
+                robot_mac_size_service_.robotServiceSetRobotPosData2Canbus(wayPointVector);
+            }
+            wayPointVector.clear();
+
+//            if(current_macsz/6 < 5){
+//                get_format_time_ms((char*)t1);
+//                printf("time=%s count=%ld, macsz=%d \n", t1 ,ros_motion_queue_.size_approx(), current_macsz/6);
+//            }
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(4));
+
+//        if(current_macsz > 0 && current_macsz < 25){
+//            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+//        }
+    }
+}
+
+int AuboDriver::checkTargetVelc(JointParam mTaget_JointAngle, JointParam mLast_JointAngle, 
+                                JointVelcAccParam &mJointVelc)
+{
+    for(int i = 0 ; i < 6 ; i++) {
+        mJointVelc.jointPara[i] = fabs(mTaget_JointAngle.jointPos[i] - mLast_JointAngle.jointPos[i]) / 0.005;
+        if(mJointVelc.jointPara[i] > MaxVelc[i]) {
+            ROS_INFO("Joint %d velc: (%f - %f) / 0.005 = %f  ", i, mTaget_JointAngle.jointPos[i], 
+                     mLast_JointAngle.jointPos[i], mJointVelc.jointPara[i]);
+            ROS_INFO("Joint%d velc out of limit.", i + 1);
+            return -1;
+        }
+    }
+    return 0;
+}
+
+int AuboDriver::checkTargetAcc(JointVelcAccParam mLastJointVelc, JointVelcAccParam &mTargetJointVelc)
+{
+    JointVelcAccParam mJointAcc;
+    for(int i = 0 ; i < ARM_DOF ; i++) {
+        mJointAcc.jointPara[i] = fabs(mTargetJointVelc.jointPara[i] - mLastJointVelc.jointPara[i]) / 0.005 ;
+        if(mJointAcc.jointPara[i] > MaxAcc[i]) {
+            ROS_INFO("Joint acc: (%f - %f)/0.005 = %f  ", mTargetJointVelc.jointPara[i], mLastJointVelc.jointPara[i], mJointAcc.jointPara[i]);
+            ROS_INFO("Joint%d acc out of limit.", i + 1);
+            return -1;
+        }
+    }
+    return 0;
+}
+
 bool AuboDriver::setIO(aubo_msgs::SetIORequest& req, aubo_msgs::SetIOResponse& resp)
 {
     resp.success = true;
@@ -826,6 +1065,8 @@ bool AuboDriver::getFK(aubo_msgs::GetFKRequest& req, aubo_msgs::GetFKResponse& r
     resp.ori.push_back(wayPoint.orientation.x);
     resp.ori.push_back(wayPoint.orientation.y);
     resp.ori.push_back(wayPoint.orientation.z);
+
+    return true;
 }
 
 bool AuboDriver::getIK(aubo_msgs::GetIKRequest& req, aubo_msgs::GetIKResponse& resp)
@@ -843,6 +1084,8 @@ bool AuboDriver::getIK(aubo_msgs::GetIKRequest& req, aubo_msgs::GetIKResponse& r
     resp.joint.push_back(wayPoint.jointpos[3]);
     resp.joint.push_back(wayPoint.jointpos[4]);
     resp.joint.push_back(wayPoint.jointpos[5]);
+
+    return true;
 }
 
 }

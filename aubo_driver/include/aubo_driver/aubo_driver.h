@@ -33,6 +33,8 @@
 
 #include <thread>
 #include <string>
+#include <fstream>
+#include <iostream>
 #include <sys/timeb.h>
 #include <queue>
 
@@ -59,6 +61,7 @@
 #include <industrial_msgs/RobotStatus.h>
 #include "aubo_driver/AuboRobotMetaType.h"
 #include "aubo_driver/serviceinterface.h"
+#include "aubo_driver/readerwriterqueue.h"
 #include "sensor_msgs/JointState.h"
 #include <control_msgs/FollowJointTrajectoryFeedback.h>
 
@@ -115,6 +118,17 @@ namespace aubo_driver
         aubo_robot_namespace::RobotErrorCode code_;
     };
 
+    typedef struct
+    {
+        double jointPos[ARM_DOF];
+    }JointParam;
+
+
+    typedef struct
+    {
+        double jointPara[ARM_DOF];
+    }JointVelcAccParam;
+
     class AuboDriver
     {
         public:
@@ -145,6 +159,7 @@ namespace aubo_driver
             int buffer_size_;
             ServiceInterface robot_send_service_;      //send
             ServiceInterface robot_receive_service_;     //receive
+            std::vector<aubo_robot_namespace::wayPoint_S> waypoint_vector_;
 
             RobotState rs;
 //            std::thread* mb_publish_thread_;
@@ -172,6 +187,11 @@ namespace aubo_driver
             bool setRobotJointsByMoveIt();
             void controllerSwitchCallback(const std_msgs::Int32::ConstPtr &msg);
             void publishIOMsg();
+            std::vector<aubo_robot_namespace::wayPoint_S> tryPopWaypoint(int count);
+            void publishWaypointToRobot();
+            int checkTargetVelc(JointParam mTaget_JointAngle, JointParam mLast_JointAngle, 
+                                JointVelcAccParam &mJointVelc);
+            int checkTargetAcc(JointVelcAccParam mLastJointVelc, JointVelcAccParam &mTargetJointVelc);
 
             bool reverse_connected_;
             double last_recieve_point_[ARM_DOF];   /** To avoid joining the same waypoint to the queue **/
@@ -210,6 +230,21 @@ namespace aubo_driver
             industrial_msgs::RobotStatus robot_status_;
 
             int delay_clear_times;
+
+        private:
+            std::array<double, 6> ros_joint_pos_;
+            moodycamel::ReaderWriterQueue<std::array<double, 6>> ros_motion_queue_;
+            aubo_robot_namespace::wayPoint_S waypoint_;
+            std::array<double, 6> joint_filter_;
+
+            ServiceInterface robot_mac_size_service_;
+            std::thread* send_to_robot_thread_;
+            JointVelcAccParam target_joint_velc_;   
+            JointVelcAccParam joint_acc_;
+            JointVelcAccParam last_joint_velc_;
+            bool over_speed_flag_;
+
+
     };
 }
 

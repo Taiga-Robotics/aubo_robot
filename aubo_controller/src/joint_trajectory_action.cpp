@@ -500,7 +500,11 @@ int main(int argc, char** argv)
           controller_name = "aubo_e5_controller/follow_joint_trajectory";
   else if(robot_name == "aubo_e3")
           controller_name = "aubo_e3_controller/follow_joint_trajectory";
-
+  else if(robot_name == "aubo_i20")
+          controller_name = "aubo_i20_controller/follow_joint_trajectory";
+  else if(robot_name == "aubo_iS20")
+          controller_name = "aubo_is20_controller/follow_joint_trajectory";
+          
   JointTrajectoryAction action(controller_name);
   action.run();
 
