@@ -8,6 +8,8 @@ find_package(catkin REQUIRED COMPONENTS
   aubo_msgs
 )
 
+# find_package(Protobuf REQUIRED)
+
 catkin_package(
   INCLUDE_DIRS include
   CATKIN_DEPENDS sensor_msgs roscpp std_msgs aubo_msgs
@@ -29,7 +31,7 @@ endif()
 include_directories(include include/otg ${catkin_INCLUDE_DIRS})
 
 if(CMAKE_SIZEOF_VOID_P EQUAL 8)
-        link_directories(${catkin_LIB_DIRS}  lib/lib64 lib/lib64/log4cplus lib/lib64/config lib/lib64/aubocontroller)
+        link_directories(${catkin_LIB_DIRS}  lib/lib64 lib/lib64/log4cplus lib/lib64/config lib/lib64/aubocontroller lib/lib64/protobuf)
 else()
         link_directories(${catkin_LIB_DIRS}  lib/lib32)
 endif()
@@ -67,8 +69,8 @@ install(DIRECTORY include/${PROJECT_NAME}/
    FILES_MATCHING PATTERN "*.h"
  )
 
-add_dependencies(aubo_driver aubo_msgs_gencpp)
-add_dependencies(testIO aubo_msgs_gencpp)
-add_dependencies(testAuboAPI aubo_msgs_gencpp)
+# add_dependencies(aubo_driver aubo_msgs_gencpp)
+# add_dependencies(testIO aubo_msgs_gencpp)
+# add_dependencies(testAuboAPI aubo_msgs_gencpp)
 
 

@@ -9,15 +9,8 @@ find_package(catkin REQUIRED COMPONENTS roscpp std_msgs sensor_msgs
   control_msgs trajectory_msgs actionlib_msgs actionlib
   urdf industrial_msgs industrial_utils)
 
-if("$ENV{ROS_DISTRO}" STREQUAL "kinetic")
-    find_package(Eigen3 REQUIRED)
-    Message(STATUS "<<<<<<<<<<<<<<<<<<<<<<<<<Note: Find Eigen3 Package in aubo_planner for kinetic")
-endif()
 
-if("$ENV{ROS_DISTRO}" STREQUAL "indigo")
-    find_package(Eigen REQUIRED)
-    Message(STATUS "<<<<<<<<<<<<<<<<<<<<<<<<<Note: Find Eigen Package in aubo_planner for  for indigo")
-endif()
+find_package(Eigen3 REQUIRED)
 
 catkin_package(
   CATKIN_DEPENDS
@@ -55,15 +48,8 @@ endif()
 
 include_directories(include  ${catkin_INCLUDE_DIRS})
 
-if("$ENV{ROS_DISTRO}" STREQUAL "kinetic")
-    include_directories(SYSTEM ${Boost_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIRS})
-    Message(STATUS "<<<<<<<<<<<<<<<<<<<<<<<<<Note: Find EIGEN3_INCLUDE_DIRS Package in aubo_planner for kinetic")
-endif()
 
-if("$ENV{ROS_DISTRO}" STREQUAL "indigo")
-    include_directories(SYSTEM ${Boost_INCLUDE_DIR} ${EIGEN_INCLUDE_DIRS})
-    Message(STATUS "<<<<<<<<<<<<<<<<<<<<<<<<<Note: Find EIGEN_INCLUDE_DIRS Package in aubo_planner for  for indigo")
-endif()
+include_directories(SYSTEM ${Boost_INCLUDE_DIR} ${EIGEN3_INCLUDE_DIRS})
 
 link_directories(${catkin_LIBRARY_DIRS} )
 

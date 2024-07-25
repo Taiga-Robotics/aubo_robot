@@ -10,7 +10,7 @@ if("$ENV{ROS_DISTRO}" STREQUAL "kinetic")
 endif()
 
 
-find_package(Boost REQUIRED COMPONENTS system)
+# find_package(Boost REQUIRED COMPONENTS system)
 
 
 catkin_package(
@@ -18,7 +18,7 @@ catkin_package(
   LIBRARIES aubo_i3_kinematic aubo_i5_kinematic aubo_i10_kinematic aubo_i3_moveit_kinematic_plugin aubo_i5_moveit_kinematic_plugin aubo_i10_moveit_kinematic_plugin
   CATKIN_DEPENDS roscpp geometry_msgs moveit_core moveit_ros_planning
                  pluginlib tf_conversions
-  DEPENDS boost
+  # DEPENDS boost
 )
 
 
@@ -26,7 +26,7 @@ catkin_package(
 ## Build ##
 ###########
 
-include_directories(SYSTEM ${Boost_INCLUDE_DIR})
+# include_directories(SYSTEM ${Boost_INCLUDE_DIR})
 include_directories(include ${catkin_INCLUDE_DIRS})
 
 
@@ -47,19 +47,19 @@ set_target_properties(aubo_i10_kinematic PROPERTIES COMPILE_DEFINITIONS "AUBO_I1
 add_library(aubo_i3_moveit_kinematic_plugin src/aubo_moveit_plugin.cpp)
 target_link_libraries(aubo_i3_moveit_kinematic_plugin
   ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
+  # ${Boost_LIBRARIES}
   aubo_i3_kinematic)
 
 add_library(aubo_i5_moveit_kinematic_plugin src/aubo_moveit_plugin.cpp)
 target_link_libraries(aubo_i5_moveit_kinematic_plugin
   ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
+  # ${Boost_LIBRARIES}
   aubo_i5_kinematic)
 
 add_library(aubo_i10_moveit_kinematic_plugin src/aubo_moveit_plugin.cpp)
 target_link_libraries(aubo_i10_moveit_kinematic_plugin
   ${catkin_LIBRARIES}
-  ${Boost_LIBRARIES}
+  # ${Boost_LIBRARIES}
   aubo_i10_kinematic)
 
 #add_library(aubo_i5_moveit_plugin src/aubo_moveit_plugin.cpp)
