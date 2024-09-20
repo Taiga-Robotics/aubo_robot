@@ -69,6 +69,13 @@ install(DIRECTORY include/${PROJECT_NAME}/
    FILES_MATCHING PATTERN "*.h"
  )
 
+ #  install(TARGETS medatech_supervisor_node medatech_supervisor_node_mast test_medatech_supervisor_node medatech_supervisor_node_shortcut_cmd
+install(TARGETS aubo_driver testAuboAPI testIO aubo_gazebo_driver
+ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
+RUNTIME DESTINATION ${CATKIN_PACKAGE_BIN_DESTINATION}
+)
+
 # add_dependencies(aubo_driver aubo_msgs_gencpp)
 # add_dependencies(testIO aubo_msgs_gencpp)
 # add_dependencies(testAuboAPI aubo_msgs_gencpp)
